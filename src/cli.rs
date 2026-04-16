@@ -24,9 +24,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: MemoryCommands,
     },
-    Writer {
+    Write {
         chapter_num: u32,
-        #[arg(long)]
+        requirement: Option<String>,
+    },
+    BatchWrite {
+        start_chapter: u32,
+        end_chapter: u32,
         requirement: Option<String>,
     },
 }
@@ -160,4 +164,15 @@ pub fn prompt_app_config(
 pub fn prompt_confirm(message: &str) -> Result<bool> {
     let answer = read_line(&format!("{message} [y/N]: "))?;
     Ok(matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes"))
+}
+
+pub fn prompt_retry_or_exit(message: &str) -> Result<bool> {
+    loop {
+        let answer = read_line(&format!("{message} [r=retry/e=exit]: "))?;
+        match answer.to_ascii_lowercase().as_str() {
+            "r" | "retry" => return Ok(true),
+            "e" | "exit" | "" => return Ok(false),
+            _ => println!("请输入 r（重试）或 e（退出）"),
+        }
+    }
 }

@@ -5,7 +5,7 @@ mod core;
 
 use std::fs;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
                 "已从 outline.txt 重新同步记忆到 memory.db".green()
             );
         }
-        Commands::Writer {
+        Commands::Write {
             chapter_num,
             requirement,
         } => {
@@ -63,12 +63,13 @@ async fn main() -> Result<()> {
                 format!("正在撰写第 {} 章...", chapter_num).yellow()
             );
 
-            writer_agent
+            let chapter_text = writer_agent
                 .write_chapter(
                     chapter_num,
-                    requirement.as_deref().unwrap_or(""),
+                    requirement.as_deref(),
+                    1,
+                    1,
                     &db,
-                    &memory_agent,
                 )
                 .await?;
 
@@ -85,8 +86,6 @@ async fn main() -> Result<()> {
                 "正在提取本章摘要并更新记忆库...".yellow()
             );
 
-            let chapter_text = fs::read_to_string(&chapter_path)
-                .with_context(|| format!("failed to read chapter file: {chapter_path}"))?;
             memory_agent
                 .summarize_chapter(chapter_num, &chapter_text, &db)
                 .await?;
@@ -95,6 +94,122 @@ async fn main() -> Result<()> {
                 "{} {}",
                 "[✅]".green().bold(),
                 "记忆库更新完成！系统已记住当前剧情进度。".green()
+            );
+        }
+        Commands::BatchWrite {
+            start_chapter,
+            end_chapter,
+            requirement,
+        } => {
+            if end_chapter < start_chapter {
+                return Err(anyhow!(
+                    "end_chapter 必须大于或等于 start_chapter，当前输入: {} < {}",
+                    end_chapter,
+                    start_chapter
+                ));
+            }
+
+            let total_chapters = end_chapter - start_chapter + 1;
+            let requirement = requirement.unwrap_or_default();
+
+            for chapter_num in start_chapter..=end_chapter {
+                let current_index = chapter_num - start_chapter + 1;
+
+                loop {
+                    println!(
+                        "{} {}",
+                        "[⏳]".yellow().bold(),
+                        format!(
+                            "正在撰写第 {} 章 (剧情进度: {}/{})...",
+                            chapter_num, current_index, total_chapters
+                        )
+                        .yellow()
+                    );
+
+                    match writer_agent
+                        .write_chapter(
+                            chapter_num,
+                            Some(requirement.as_str()),
+                            current_index,
+                            total_chapters,
+                            &db,
+                        )
+                        .await
+                    {
+                        Ok(chapter_text) => {
+                            let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
+                            println!(
+                                "{} {}",
+                                "[✅]".green().bold(),
+                                format!("第 {} 章已保存至 {}", chapter_num, chapter_path).green()
+                            );
+
+                            println!(
+                                "{} {}",
+                                "[⏳]".yellow().bold(),
+                                format!("正在总结第 {} 章并写入记忆库...", chapter_num).yellow()
+                            );
+
+                            match memory_agent
+                                .summarize_chapter(chapter_num, &chapter_text, &db)
+                                .await
+                            {
+                                Ok(()) => {
+                                    println!(
+                                        "{} {}",
+                                        "[✅]".green().bold(),
+                                        format!(
+                                            "第 {} 章摘要已写入记忆库，继续下一章。",
+                                            chapter_num
+                                        )
+                                        .green()
+                                    );
+                                    break;
+                                }
+                                Err(error) => {
+                                    println!(
+                                        "{} {}",
+                                        "[错误]".red().bold(),
+                                        format!(
+                                            "第 {} 章摘要更新失败：{:#}",
+                                            chapter_num, error
+                                        )
+                                        .red()
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            println!(
+                                "{} {}",
+                                "[错误]".red().bold(),
+                                format!("第 {} 章生成失败：{:#}", chapter_num, error).red()
+                            );
+                        }
+                    }
+
+                    if !cli::prompt_retry_or_exit(&format!(
+                        "第 {} 章处理失败，是否重试？选择 e 将立即退出 batch-write",
+                        chapter_num
+                    ))? {
+                        println!(
+                            "{} {}",
+                            "[Stopped]".yellow().bold(),
+                            format!("batch-write 已在第 {} 章停止。", chapter_num).yellow()
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
+            println!(
+                "{} {}",
+                "[✅]".green().bold(),
+                format!(
+                    "batch-write 已完成，共处理章节 {}-{}。",
+                    start_chapter, end_chapter
+                )
+                .green()
             );
         }
     }

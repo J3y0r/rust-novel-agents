@@ -3,7 +3,7 @@ use std::fs;
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 
-use crate::agents::{Agent, BaseAgent, MemoryAgent};
+use crate::agents::{Agent, BaseAgent};
 use crate::config::AgentConfig;
 use crate::core::memory_db::MemoryDb;
 
@@ -22,8 +22,13 @@ const WRITER_PROMPT_TEMPLATE: &str = r#"
 [前情提要]
 {history_summary}
 
+[剧情节奏控制（Pacing）]
+{pacing_guidance}
+
 [本章任务]
-请撰写第 {chapter_num} 章，要求：{requirement}
+请撰写第 {chapter_num} 章。
+
+{requirement_instruction}
 
 [输出要求]
 1. 直接输出小说正文，不要附加解释、标题说明或创作备注。
@@ -49,11 +54,18 @@ impl WriterAgent {
     pub async fn write_chapter(
         &self,
         chapter_num: u32,
-        requirement: &str,
+        requirement: Option<&str>,
+        arc_current_index: u32,
+        arc_total_chapters: u32,
         db: &MemoryDb,
-        memory_agent: &MemoryAgent,
     ) -> Result<String> {
-        let prompt = self.build_writer_prompt(chapter_num, requirement, db, memory_agent)?;
+        let prompt = self.build_writer_prompt(
+            chapter_num,
+            requirement,
+            arc_current_index,
+            arc_total_chapters,
+            db,
+        )?;
         let chapter_text = self
             .run(&prompt)
             .await
@@ -68,25 +80,124 @@ impl WriterAgent {
     fn build_writer_prompt(
         &self,
         chapter_num: u32,
-        requirement: &str,
+        requirement: Option<&str>,
+        arc_current_index: u32,
+        arc_total_chapters: u32,
         db: &MemoryDb,
-        memory_agent: &MemoryAgent,
     ) -> Result<String> {
         let outline_content = self.read_outline_content()?;
-        let long_term_memory = memory_agent.build_context_prompt(db)?;
+        let long_term_memory = self.build_long_term_memory_prompt(db)?;
         let history_summary = db.get_recent_summaries(3)?;
-        let chapter_requirement = if requirement.trim().is_empty() {
-            "无额外要求"
-        } else {
-            requirement.trim()
+        let trimmed_requirement = requirement.and_then(|req| {
+            let trimmed = req.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+        let requirement_instruction = match trimmed_requirement {
+            Some(req) => format!(
+                "【本章核心定制要求】：用户特别指定本章必须写这些内容：{}。请你务必围绕这个核心要求来安排剧情！",
+                req
+            ),
+            None => "【本章核心定制要求】：用户未提供特定细节，请根据大纲和前情提要，自然地推进剧情。"
+                .to_string(),
         };
+        let pacing_guidance = self.build_pacing_guidance(
+            trimmed_requirement.unwrap_or("自然推进剧情"),
+            arc_current_index,
+            arc_total_chapters,
+        );
 
         Ok(WRITER_PROMPT_TEMPLATE
             .replace("{long_term_memory}", &long_term_memory)
             .replace("{outline_content}", outline_content.trim())
             .replace("{history_summary}", &history_summary)
+            .replace("{pacing_guidance}", &pacing_guidance)
             .replace("{chapter_num}", &chapter_num.to_string())
-            .replace("{requirement}", chapter_requirement))
+            .replace("{requirement_instruction}", &requirement_instruction))
+    }
+
+    fn build_pacing_guidance(
+        &self,
+        requirement: &str,
+        arc_current_index: u32,
+        arc_total_chapters: u32,
+    ) -> String {
+        if arc_total_chapters <= 1 {
+            return "本次任务为单章写作，不涉及跨章拆分。请在本章内完整推进用户要求的剧情，同时保留自然的章节钩子。"
+                .to_string();
+        }
+
+        let mut guidance = format!(
+            "用户要求的大剧情是【{}】。本次大剧情共分为 {} 章，你现在正在撰写其中的第 {} 章。",
+            requirement, arc_total_chapters, arc_current_index
+        );
+
+        let stage_guidance = if arc_current_index == 1 {
+            "这是剧情的开端，请注重环境渲染和矛盾铺垫，绝对不要在本章解决核心冲突，请在结尾留下强烈悬念。"
+        } else if arc_current_index < arc_total_chapters {
+            "这是剧情的中段，请将冲突推向高潮，保持剧情张力，结尾留置下文。"
+        } else {
+            "这是本段剧情的收尾，请解决核心冲突，安排合理的爽点爆发，并为下一个大事件做好过渡。"
+        };
+
+        guidance.push('\n');
+        guidance.push_str(stage_guidance);
+        guidance
+    }
+
+    fn build_long_term_memory_prompt(&self, db: &MemoryDb) -> Result<String> {
+        let snapshot = db.load_all_memory()?;
+        let mut sections = Vec::new();
+
+        let characters = if snapshot.characters.is_empty() {
+            "- None yet".to_string()
+        } else {
+            snapshot
+                .characters
+                .into_iter()
+                .map(|character| match character.location {
+                    Some(location) if !location.trim().is_empty() => format!(
+                        "- **{}**\n  - Description: {}\n  - Status: {}\n  - Location: {}",
+                        character.name, character.description, character.status, location
+                    ),
+                    _ => format!(
+                        "- **{}**\n  - Description: {}\n  - Status: {}",
+                        character.name, character.description, character.status
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        sections.push(format!("## Characters\n{}", characters));
+
+        let world_settings = if snapshot.world_settings.is_empty() {
+            "- None yet".to_string()
+        } else {
+            snapshot
+                .world_settings
+                .into_iter()
+                .map(|setting| format!("- **{}**: {}", setting.category, setting.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        sections.push(format!("## World Settings\n{}", world_settings));
+
+        let chapter_summaries = if snapshot.chapter_summaries.is_empty() {
+            "- None yet".to_string()
+        } else {
+            snapshot
+                .chapter_summaries
+                .into_iter()
+                .map(|chapter| format!("- Chapter {}: {}", chapter.chapter_num, chapter.summary))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        sections.push(format!("## Chapter Summaries\n{}", chapter_summaries));
+
+        Ok(sections.join("\n\n"))
     }
 
     fn read_outline_content(&self) -> Result<String> {
