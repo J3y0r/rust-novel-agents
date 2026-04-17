@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,23 @@ const DEFAULT_MEMORY_SYSTEM_PROMPT: &str =
     "你是一个专业的记忆 Agent，负责维护世界观、人物设定、伏笔和上下文一致性。";
 const DEFAULT_WRITER_SYSTEM_PROMPT: &str =
     "你是一个专业的主笔 Agent，负责根据大纲和记忆信息撰写高质量正文。";
+
+fn resolve_config_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .with_context(|| "failed to get home directory")?;
+    Ok(PathBuf::from(home).join(".novel-agent").join(CONFIG_FILE_NAME))
+}
+
+fn ensure_config_dir() -> Result<()> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .with_context(|| "failed to get home directory")?;
+    let dir = PathBuf::from(home).join(".novel-agent");
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("failed to create config directory: {}", dir.display()))?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -43,11 +60,12 @@ pub enum Provider {
 
 impl AppConfig {
     pub fn load_or_create_interactively() -> Result<Self> {
-        let path = Path::new(CONFIG_FILE_NAME);
+        let path = resolve_config_path()?;
         if path.exists() {
             return Self::load();
         }
 
+        ensure_config_dir()?;
         println!("未检测到 config.toml，开始交互式生成配置。\n");
         let config = cli::prompt_app_config(
             &Self::outline_agent_defaults(),
@@ -56,13 +74,16 @@ impl AppConfig {
         )?;
         config.validate()?;
         config.save()?;
-        println!("\n已生成 config.toml，后续启动将直接复用该配置。\n");
+        println!(
+            "\n已生成 {}，后续启动将直接复用该配置。\n",
+            path.display()
+        );
         Ok(config)
     }
 
     fn load() -> Result<Self> {
-        let path = Path::new(CONFIG_FILE_NAME);
-        let content = fs::read_to_string(path)
+        let path = resolve_config_path()?;
+        let content = fs::read_to_string(&path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
         let config = toml::from_str::<AppConfig>(&content)
             .with_context(|| format!("failed to parse config file: {}", path.display()))?;
@@ -71,10 +92,12 @@ impl AppConfig {
     }
 
     fn save(&self) -> Result<()> {
+        ensure_config_dir()?;
+        let path = resolve_config_path()?;
         let content = toml::to_string_pretty(self)
             .context("failed to serialize application config into TOML")?;
-        fs::write(CONFIG_FILE_NAME, content.as_bytes())
-            .with_context(|| format!("failed to write config file: {CONFIG_FILE_NAME}"))?;
+        fs::write(&path, content.as_bytes())
+            .with_context(|| format!("failed to write config file: {}", path.display()))?;
         Ok(())
     }
 

@@ -5,7 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const DEFAULT_DB_PATH: &str = "memory.db";
+use crate::core::workspace::Workspace;
+
 const BUSY_TIMEOUT_SECONDS: u64 = 5;
 
 #[derive(Debug)]
@@ -50,8 +51,8 @@ pub struct MemorySnapshot {
 }
 
 impl MemoryDb {
-    pub fn new() -> Result<Self> {
-        Self::open(DEFAULT_DB_PATH)
+    pub fn new(workspace: &Workspace) -> Result<Self> {
+        Self::open(workspace.db_path())
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {

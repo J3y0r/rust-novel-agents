@@ -6,9 +6,8 @@ use colored::Colorize;
 use crate::agents::{Agent, BaseAgent};
 use crate::config::AgentConfig;
 use crate::core::memory_db::MemoryDb;
+use crate::core::workspace::Workspace;
 
-const OUTLINE_FILE_PATH: &str = "outline.txt";
-const CHAPTERS_DIR: &str = "chapters";
 const WRITER_PROMPT_TEMPLATE: &str = r#"
 [系统设定]
 你是专业网文主笔，负责严格遵循既定大纲、长期记忆和历史剧情，创作连贯、有冲突推进和追读钩子的中文网文正文。
@@ -42,12 +41,14 @@ const WRITER_PROMPT_TEMPLATE: &str = r#"
 #[derive(Debug, Clone)]
 pub struct WriterAgent {
     base: BaseAgent,
+    workspace: Workspace,
 }
 
 impl WriterAgent {
-    pub fn new(config: AgentConfig) -> Result<Self> {
+    pub fn new(config: AgentConfig, workspace: &Workspace) -> Result<Self> {
         Ok(Self {
             base: BaseAgent::new("writer_agent", config)?,
+            workspace: workspace.clone(),
         })
     }
 
@@ -201,13 +202,15 @@ impl WriterAgent {
     }
 
     fn read_outline_content(&self) -> Result<String> {
-        match fs::read_to_string(OUTLINE_FILE_PATH) {
+        let outline_path = self.workspace.outline_path();
+        match fs::read_to_string(&outline_path) {
             Ok(content) => Ok(content),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(anyhow!(
-                "未找到 outline.txt，请先运行 novel outline 生成或手动创建大纲"
+                "未找到大纲文件 {}，请先运行 novel outline 生成或手动创建大纲",
+                outline_path.display()
             )),
             Err(error) => Err(error)
-                .with_context(|| format!("failed to read outline file: {OUTLINE_FILE_PATH}")),
+                .with_context(|| format!("failed to read outline file: {}", outline_path.display())),
         }
     }
 
@@ -227,20 +230,21 @@ impl WriterAgent {
     }
 
     fn save_chapter(&self, chapter_num: u32, chapter_text: &str) -> Result<String> {
-        fs::create_dir_all(CHAPTERS_DIR)
-            .with_context(|| format!("failed to create chapter directory: {CHAPTERS_DIR}"))?;
+        let chapters_dir = self.workspace.chapters_dir();
+        fs::create_dir_all(&chapters_dir)
+            .with_context(|| format!("failed to create chapter directory: {}", chapters_dir.display()))?;
 
-        let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
+        let chapter_path = chapters_dir.join(format!("chapter_{chapter_num}.txt"));
         fs::write(&chapter_path, chapter_text.as_bytes())
-            .with_context(|| format!("failed to write chapter file: {chapter_path}"))?;
+            .with_context(|| format!("failed to write chapter file: {}", chapter_path.display()))?;
 
         println!(
             "{} {}",
             "[Saved]".green().bold(),
-            format!("第 {} 章已成功写入本地 TXT：{}", chapter_num, chapter_path).green()
+            format!("第 {} 章已成功写入本地 TXT：{}", chapter_num, chapter_path.display()).green()
         );
 
-        Ok(chapter_path)
+        Ok(chapter_path.to_string_lossy().to_string())
     }
 }
 

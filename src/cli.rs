@@ -9,6 +9,8 @@ use crate::config::{AgentConfig, AppConfig, Provider};
 #[command(name = "novel")]
 #[command(about = "纯 CLI 网文三 Agent 框架")]
 pub struct Cli {
+    #[arg(long, default_value = "default")]
+    pub novel: String,
     #[command(subcommand)]
     pub command: Commands,
 }

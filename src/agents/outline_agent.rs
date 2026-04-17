@@ -9,8 +9,8 @@ use crate::agents::{Agent, BaseAgent, MemoryAgent};
 use crate::cli;
 use crate::config::AgentConfig;
 use crate::core::memory_db::MemoryDb;
+use crate::core::workspace::Workspace;
 
-const OUTLINE_FILE_PATH: &str = "outline.txt";
 const SPINNER_TEMPLATE: &str = "{spinner} {msg}";
 const OUTLINE_PROMPT_TEMPLATE: &str = r#"
 请基于下面信息生成一份详细的中文网文大纲。
@@ -34,12 +34,14 @@ const OUTLINE_PROMPT_TEMPLATE: &str = r#"
 #[derive(Debug, Clone)]
 pub struct OutlineAgent {
     base: BaseAgent,
+    workspace: Workspace,
 }
 
 impl OutlineAgent {
-    pub fn new(config: AgentConfig) -> Result<Self> {
+    pub fn new(config: AgentConfig, workspace: &Workspace) -> Result<Self> {
         Ok(Self {
             base: BaseAgent::new("outline_agent", config)?,
+            workspace: workspace.clone(),
         })
     }
 
@@ -66,8 +68,11 @@ impl OutlineAgent {
         println!(
             "{} {}",
             "[Saved]".green().bold(),
-            "大纲已生成至 outline.txt，请手动修改。修改满意后，请运行 `novel memory sync` 更新记忆库。"
-                .green()
+            format!(
+                "大纲已生成至 {}，请手动修改。修改满意后，请运行 `novel memory sync` 更新记忆库。",
+                self.workspace.outline_path().display()
+            )
+            .green()
         );
 
         Ok(outline)
@@ -111,14 +116,18 @@ impl OutlineAgent {
     }
 
     fn save_outline(&self, outline: &str) -> Result<()> {
-        if fs::metadata(OUTLINE_FILE_PATH).is_ok()
-            && !cli::prompt_confirm("outline.txt 已存在，是否覆盖？")?
+        let outline_path = self.workspace.outline_path();
+        if fs::metadata(&outline_path).is_ok()
+            && !cli::prompt_confirm(&format!(
+                "{} 已存在，是否覆盖？",
+                outline_path.display()
+            ))?
         {
-            bail!("outline generation canceled because outline.txt already exists")
+            bail!("outline generation canceled because outline file already exists")
         }
 
-        fs::write(OUTLINE_FILE_PATH, outline.as_bytes())
-            .with_context(|| format!("failed to write outline file: {OUTLINE_FILE_PATH}"))?;
+        fs::write(&outline_path, outline.as_bytes())
+            .with_context(|| format!("failed to write outline file: {}", outline_path.display()))?;
         Ok(())
     }
 }

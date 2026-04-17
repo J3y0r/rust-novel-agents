@@ -13,21 +13,27 @@ use crate::agents::{MemoryAgent, OutlineAgent, WriterAgent};
 use crate::cli::{Cli, Commands, MemoryCommands};
 use crate::config::AppConfig;
 use crate::core::memory_db::MemoryDb;
-
-const OUTLINE_FILE_PATH: &str = "outline.txt";
-const CHAPTERS_DIR: &str = "chapters";
+use crate::core::workspace::Workspace;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config =
         AppConfig::load_or_create_interactively().context("failed to load application config")?;
-    let db = MemoryDb::new().context("failed to initialize memory database")?;
-    let outline_agent = OutlineAgent::new(config.outline_agent.clone())
+    let workspace = Workspace::new(&cli.novel)
+        .with_context(|| format!("failed to initialize workspace for novel: {}", cli.novel))?;
+    println!(
+        "{} {}",
+        "[Novel]".cyan().bold(),
+        format!("当前项目: {}", workspace.novel_name()).cyan()
+    );
+
+    let db = MemoryDb::new(&workspace).context("failed to initialize memory database")?;
+    let outline_agent = OutlineAgent::new(config.outline_agent.clone(), &workspace)
         .context("failed to initialize outline agent")?;
     let memory_agent = MemoryAgent::new(config.memory_agent.clone())
         .context("failed to initialize memory agent")?;
-    let writer_agent = WriterAgent::new(config.writer_agent.clone())
+    let writer_agent = WriterAgent::new(config.writer_agent.clone(), &workspace)
         .context("failed to initialize writer agent")?;
 
     match cli.command {
@@ -44,13 +50,14 @@ async fn main() -> Result<()> {
         Commands::Memory {
             command: MemoryCommands::Sync,
         } => {
-            let outline_text = fs::read_to_string(OUTLINE_FILE_PATH)
-                .with_context(|| format!("failed to read outline file: {OUTLINE_FILE_PATH}"))?;
+            let outline_path = workspace.outline_path();
+            let outline_text = fs::read_to_string(&outline_path)
+                .with_context(|| format!("failed to read outline file: {}", outline_path.display()))?;
             memory_agent.sync_from_outline(&outline_text, &db).await?;
             println!(
                 "{} {}",
                 "[Memory]".green().bold(),
-                "已从 outline.txt 重新同步记忆到 memory.db".green()
+                format!("已从 {} 重新同步记忆到 memory.db", outline_path.display()).green()
             );
         }
         Commands::Write {
@@ -72,13 +79,6 @@ async fn main() -> Result<()> {
                     &db,
                 )
                 .await?;
-
-            let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
-            println!(
-                "{} {}",
-                "[✅]".green().bold(),
-                format!("第 {} 章已保存至 {}", chapter_num, chapter_path).green()
-            );
 
             println!(
                 "{} {}",
@@ -137,13 +137,6 @@ async fn main() -> Result<()> {
                         .await
                     {
                         Ok(chapter_text) => {
-                            let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
-                            println!(
-                                "{} {}",
-                                "[✅]".green().bold(),
-                                format!("第 {} 章已保存至 {}", chapter_num, chapter_path).green()
-                            );
-
                             println!(
                                 "{} {}",
                                 "[⏳]".yellow().bold(),
