@@ -32,14 +32,16 @@ The result is a workflow that feels closer to a small writing system than a sing
 
 ## What it does today
 
-The current implementation already supports a complete local writing loop:
+The current implementation already supports a complete local writing workflow:
 
 1. generate an outline from an idea
 2. extract characters and world settings into SQLite
 3. manually revise the outline if needed
 4. sync the revised outline back into memory
-5. write the next chapter from outline + long-term memory + recent summaries
-6. extract chapter summary and character state updates back into SQLite
+5. inspect and patch character/world memory from the CLI
+6. write a single chapter or a chapter range from outline + long-term memory + recent summaries
+7. rebuild memory from local outline and chapter files when the database needs to be repaired
+8. export generated chapters as Markdown or EPUB
 
 That core loop is implemented across:
 
@@ -118,11 +120,13 @@ manual outline revision
   ↓
 memory sync
   ↓
-chapter writing
+optional character/lore patching from CLI
+  ↓
+single chapter writing or batch chapter writing
   ↓
 chapter summary + state update extraction
   ↓
-next chapter
+export / continue next chapter
 ```
 
 Runtime files generated in the working directory:
@@ -159,7 +163,7 @@ If `config.toml` does not exist, the app creates it interactively on startup.
 
 You will be prompted to configure all three agents with:
 
-- provider
+- provider (`openai`, `ollama`, or `anthropic`)
 - api_base
 - api_key
 - model
@@ -169,6 +173,23 @@ You will be prompted to configure all three agents with:
 If you are using a third-party or self-hosted model service, make sure it exposes an OpenAI-compatible chat completions endpoint.
 
 ## Usage
+
+### Show help
+
+```bash
+cargo run -- --help
+```
+
+Current top-level commands include:
+
+- `outline`
+- `memory sync`
+- `memory rebuild`
+- `char list | add | kill`
+- `lore list | add`
+- `write`
+- `batch-write`
+- `export`
 
 ### Generate an outline
 
@@ -205,13 +226,13 @@ This will:
 ### Write a chapter
 
 ```bash
-cargo run -- writer 1
+cargo run -- write 1
 ```
 
 With chapter-specific instructions:
 
 ```bash
-cargo run -- writer 1 --requirement "重点写主角第一次进入宗门议事厅的压迫感，并在结尾留下悬念"
+cargo run -- write 1 "重点写主角第一次进入宗门议事厅的压迫感，并在结尾留下悬念"
 ```
 
 This will:
@@ -221,6 +242,75 @@ This will:
 - call `writer_agent`
 - save the chapter to `chapters/chapter_1.txt`
 - extract chapter summary and character status updates back into `memory.db`
+
+### Write a chapter range
+
+```bash
+cargo run -- batch-write 10 12 "主角第一次正式参与宗门大比，三章内完成铺垫、爆发和收尾"
+```
+
+This will:
+
+- write chapters from `start_chapter` to `end_chapter`
+- inject pacing guidance so the shared requirement is split across the whole arc
+- automatically clear summaries from the current chapter onward before regenerating
+- retry the same chapter interactively if generation or memory extraction fails
+
+### Inspect and patch story memory
+
+List current characters:
+
+```bash
+cargo run -- char list
+```
+
+Add or update a character:
+
+```bash
+cargo run -- char add "林舟" "外门杂役出身，极善观察局势" "活跃"
+```
+
+Mark a character as dead:
+
+```bash
+cargo run -- char kill "林舟"
+```
+
+List world settings:
+
+```bash
+cargo run -- lore list
+```
+
+Add a world setting:
+
+```bash
+cargo run -- lore add "宗门制度" "外门弟子每月考核一次，末位会被降级"
+```
+
+### Rebuild memory from local files
+
+```bash
+cargo run -- memory rebuild
+```
+
+This command clears the existing memory tables, re-imports `outline.txt`, then replays every local chapter file in `chapters/` back into SQLite.
+
+Use it when `memory.db` is stale, corrupted, or no longer matches your local outline and chapter files.
+
+### Export the novel
+
+Export all generated chapters as Markdown:
+
+```bash
+cargo run -- export --output 全书导出.md
+```
+
+Export as EPUB:
+
+```bash
+cargo run -- export --output 全书导出.epub
+```
 
 ## Architecture
 
@@ -270,9 +360,13 @@ What is already implemented:
 
 - outline generation
 - outline-to-memory synchronization
+- full memory rebuild from local files
 - single chapter writing
+- batch chapter writing with pacing guidance and retry flow
 - chapter summary extraction
 - character state updates
+- CLI character and lore management
+- Markdown / EPUB export
 - independent configuration per agent
 
 What would be natural next steps:

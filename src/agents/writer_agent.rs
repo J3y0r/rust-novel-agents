@@ -87,7 +87,7 @@ impl WriterAgent {
     ) -> Result<String> {
         let outline_content = self.read_outline_content()?;
         let long_term_memory = self.build_long_term_memory_prompt(db)?;
-        let history_summary = db.get_recent_summaries(3)?;
+        let history_summary = db.get_recent_summaries(3, chapter_num)?;
         let trimmed_requirement = requirement.and_then(|req| {
             let trimmed = req.trim();
             if trimmed.is_empty() {

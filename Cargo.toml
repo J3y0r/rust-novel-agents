@@ -7,6 +7,8 @@ edition = "2021"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 colored = "2"
+comfy-table = "7"
+epub-builder = "0.7"
 indicatif = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }

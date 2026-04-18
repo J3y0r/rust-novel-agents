@@ -200,7 +200,8 @@ impl MemoryDb {
     }
 
     pub fn update_character_status(&self, name: &str, status: &str) -> Result<()> {
-        self.conn
+        let affected = self
+            .conn
             .borrow()
             .execute(
                 "UPDATE characters SET status = ?2 WHERE name = ?1",
@@ -208,7 +209,67 @@ impl MemoryDb {
             )
             .with_context(|| format!("failed to update character status: {name}"))?;
 
+        if affected == 0 {
+            anyhow::bail!("character not found: {name}");
+        }
+
         Ok(())
+    }
+
+    pub fn add_or_update_character(
+        &self,
+        name: &str,
+        description: &str,
+        status: &str,
+    ) -> Result<()> {
+        self.upsert_character(name, description, status)
+    }
+
+    pub fn get_all_characters(&self) -> Result<Vec<(i32, String, String, String)>> {
+        let conn = self.conn.borrow();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, description, status FROM characters ORDER BY name COLLATE NOCASE ASC",
+            )
+            .context("failed to prepare all characters query")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .context("failed to query all characters")?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to collect all characters")
+    }
+
+    pub fn get_all_lores(&self) -> Result<Vec<(i32, String, String)>> {
+        let conn = self.conn.borrow();
+        let mut stmt = conn
+            .prepare("SELECT id, category, description FROM world_settings ORDER BY id ASC")
+            .context("failed to prepare all lores query")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .context("failed to query all lores")?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to collect all lores")
+    }
+
+    pub fn add_lore(&self, category: &str, description: &str) -> Result<()> {
+        self.upsert_world_setting(category, description)
     }
 
     pub fn upsert_world_setting(&self, category: &str, description: &str) -> Result<()> {
@@ -267,16 +328,16 @@ impl MemoryDb {
         Ok(())
     }
 
-    pub fn get_recent_summaries(&self, limit: u32) -> Result<String> {
+    pub fn get_recent_summaries(&self, limit: u32, current_chapter: u32) -> Result<String> {
         let conn = self.conn.borrow();
         let mut stmt = conn
             .prepare(
-                "SELECT chapter_num, summary FROM chapter_summaries ORDER BY chapter_num DESC LIMIT ?1",
+                "SELECT chapter_num, summary FROM chapter_summaries WHERE chapter_num < ?1 ORDER BY chapter_num DESC LIMIT ?2",
             )
             .context("failed to prepare recent summaries query")?;
 
         let rows = stmt
-            .query_map(params![i64::from(limit)], |row| {
+            .query_map(params![i64::from(current_chapter), i64::from(limit)], |row| {
                 Ok(ChapterSummaryMemory {
                     chapter_num: row.get(0)?,
                     summary: row.get(1)?,
@@ -299,6 +360,22 @@ impl MemoryDb {
             .join("\n"))
     }
 
+    pub fn delete_future_memories(&self, from_chapter: u32) -> Result<()> {
+        self.conn
+            .borrow()
+            .execute(
+                "DELETE FROM chapter_summaries WHERE chapter_num >= ?1",
+                params![i64::from(from_chapter)],
+            )
+            .with_context(|| {
+                format!(
+                    "failed to delete future chapter summaries from chapter {from_chapter}"
+                )
+            })?;
+
+        Ok(())
+    }
+
     pub fn clear_all_memory(&self) -> Result<()> {
         self.conn
             .borrow()
@@ -311,6 +388,11 @@ impl MemoryDb {
             )
             .context("failed to clear memory tables")?;
 
+        Ok(())
+    }
+
+    pub fn clear_all_tables(&self) -> Result<()> {
+        self.clear_all_memory()?;
         Ok(())
     }
 

@@ -24,6 +24,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: MemoryCommands,
     },
+    Char {
+        #[command(subcommand)]
+        action: CharAction,
+    },
+    Lore {
+        #[command(subcommand)]
+        action: LoreAction,
+    },
+    Export {
+        #[arg(long, default_value = "全书导出.md")]
+        output: String,
+    },
     Write {
         chapter_num: u32,
         requirement: Option<String>,
@@ -38,6 +50,30 @@ pub enum Commands {
 #[derive(Debug, Subcommand)]
 pub enum MemoryCommands {
     Sync,
+    Rebuild,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CharAction {
+    List,
+    Add {
+        name: String,
+        desc: String,
+        #[arg(default_value = "活跃")]
+        status: String,
+    },
+    Kill {
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LoreAction {
+    List,
+    Add {
+        category: String,
+        desc: String,
+    },
 }
 
 fn read_line(prompt: &str) -> Result<String> {
