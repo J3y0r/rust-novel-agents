@@ -3,7 +3,6 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::time::Duration;
-use tracing::warn;
 
 use crate::agents::{Agent, BaseAgent};
 use crate::config::AgentConfig;
@@ -330,10 +329,9 @@ impl MemoryAgent {
                 &update.description,
                 &update.status,
             ) {
-                warn!(
-                    character = %update.name,
-                    error = %err,
-                    "failed to upsert character from chapter summary"
+                eprintln!(
+                    "[Memory] failed to upsert character from chapter summary: {} ({})",
+                    update.name, err
                 );
             }
         }

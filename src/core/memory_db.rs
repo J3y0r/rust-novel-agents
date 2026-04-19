@@ -220,6 +220,18 @@ impl MemoryDb {
         Ok(())
     }
 
+    pub fn update_character_status(&self, name: &str, status: &str) -> Result<()> {
+        self.conn
+            .borrow()
+            .execute(
+                "UPDATE characters SET status = ?1 WHERE name = ?2",
+                params![status, name],
+            )
+            .with_context(|| format!("failed to update character status: {name}"))?;
+
+        Ok(())
+    }
+
     pub fn add_or_update_character(
         &self,
         name: &str,
