@@ -3,6 +3,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::time::Duration;
+use tracing::warn;
 
 use crate::agents::{Agent, BaseAgent};
 use crate::config::AgentConfig;
@@ -107,15 +108,15 @@ JSON 结构必须如下：
 
 const CHAPTER_SUMMARY_PROMPT_TEMPLATE: &str = r#"
 请阅读这篇刚刚写好的小说章节（第 {chapter_num} 章）。
-1. 写出100字以内的剧情摘要（必须包含结尾悬念或场景）。
-2. 提取出本章发生状态变化的人物及最新状态。
-请返回严格的 JSON 格式：
+【任务】：1. 写出100字以内的剧情摘要。2. 提取本章发生状态变化的人物，以及本章全新登场的人物。
+【JSON 格式要求】：请严格返回如下 JSON：
 {
   "summary": "...",
-  "status_updates": [
+  "character_updates": [
     {
-      "name": "...",
-      "new_status": "..."
+      "name": "人物名",
+      "status": "最新状态（如：活跃、重伤、死亡）",
+      "description": "如果是新登场人物，请简短概括其身份/外貌；如果是老人物，可留空"
     }
   ]
 }
@@ -123,8 +124,8 @@ const CHAPTER_SUMMARY_PROMPT_TEMPLATE: &str = r#"
 要求：
 1. 只返回 JSON，不要输出 Markdown，不要输出解释。
 2. summary 必须是单个字符串。
-3. status_updates 中只包含本章状态确实发生变化的人物。
-4. 如果没有状态变化人物，status_updates 返回空数组。
+3. character_updates 中只包含本章状态确实发生变化的人物，以及本章全新登场的人物。
+4. 如果没有可更新人物，character_updates 返回空数组。
 
 章节正文：
 {text}
@@ -154,7 +155,7 @@ struct ChapterExtractionResponse {
 #[derive(Debug, Deserialize)]
 struct ChapterSummaryResponse {
     summary: String,
-    status_updates: Vec<CharacterStatusUpdate>,
+    character_updates: Vec<CharacterUpdate>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,9 +177,11 @@ struct MemoryExtractionChapterSummary {
 }
 
 #[derive(Debug, Deserialize)]
-struct CharacterStatusUpdate {
+struct CharacterUpdate {
     name: String,
-    new_status: String,
+    status: String,
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Default)]
@@ -321,8 +324,18 @@ impl MemoryAgent {
 
         db.upsert_chapter_summary(chapter_num, summary_response.summary.trim())?;
 
-        for update in summary_response.status_updates {
-            db.update_character_status(&update.name, &update.new_status)?;
+        for update in summary_response.character_updates {
+            if let Err(err) = db.upsert_character_from_summary(
+                &update.name,
+                &update.description,
+                &update.status,
+            ) {
+                warn!(
+                    character = %update.name,
+                    error = %err,
+                    "failed to upsert character from chapter summary"
+                );
+            }
         }
 
         Ok(())

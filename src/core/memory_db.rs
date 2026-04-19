@@ -199,19 +199,23 @@ impl MemoryDb {
         Ok(outcome)
     }
 
-    pub fn update_character_status(&self, name: &str, status: &str) -> Result<()> {
-        let affected = self
-            .conn
+    pub fn upsert_character_from_summary(
+        &self,
+        name: &str,
+        description: &str,
+        status: &str,
+    ) -> Result<()> {
+        self.conn
             .borrow()
             .execute(
-                "UPDATE characters SET status = ?2 WHERE name = ?1",
-                params![name, status],
+                "
+                INSERT INTO characters (name, description, status)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT(name) DO UPDATE SET status=excluded.status, description=CASE WHEN excluded.description != '' THEN excluded.description ELSE characters.description END;
+                ",
+                params![name, description, status],
             )
-            .with_context(|| format!("failed to update character status: {name}"))?;
-
-        if affected == 0 {
-            anyhow::bail!("character not found: {name}");
-        }
+            .with_context(|| format!("failed to upsert character from summary: {name}"))?;
 
         Ok(())
     }
