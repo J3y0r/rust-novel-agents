@@ -1,0 +1,54 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64
+          path: release-assets
+
+      - name: Download windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: release-assets
+
+      - name: Set release metadata
+        id: meta
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ "$VERSION" != v* ]]; then
+            VERSION="v$VERSION"
+          fi
+          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "title=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.title }}
+          files: |
+            release-assets/novel-agent-linux-x64
+            release-assets/novel-agent-windows-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
