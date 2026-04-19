@@ -1,8 +1,7 @@
 name: autoclean
 
 on:
-  schedule:
-    - cron: '17 3 * * *'
+  push:
   workflow_dispatch:
 
 permissions:
