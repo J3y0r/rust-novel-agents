@@ -23,14 +23,6 @@ struct ChatCompletionRequest {
     model: String,
     temperature: f32,
     messages: Vec<ChatCompletionRequestMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-}
-
-#[derive(Debug, Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    r#type: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,9 +93,6 @@ impl LlmClient {
                     content: user_prompt.to_string(),
                 },
             ],
-            response_format: Some(ResponseFormat {
-                r#type: "json_object".to_string(),
-            }),
         };
 
         let max_retries = 3;

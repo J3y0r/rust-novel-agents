@@ -79,6 +79,139 @@ fn collect_chapter_files(chapters_dir: &Path) -> Result<Vec<(u32, PathBuf)>> {
     Ok(chapter_files)
 }
 
+async fn run_chapter_range(
+    start_chapter: u32,
+    end_chapter: u32,
+    requirement: Option<String>,
+    command_name: &str,
+) -> Result<()> {
+    if end_chapter < start_chapter {
+        return Err(anyhow!(
+            "end_chapter 必须大于或等于 start_chapter，当前输入: {} < {}",
+            end_chapter,
+            start_chapter
+        ));
+    }
+
+    let db = init_db()?;
+    let (writer_agent, memory_agent) = init_writer_and_memory_agents()?;
+    let total_chapters = end_chapter - start_chapter + 1;
+    let requirement = requirement.unwrap_or_default();
+
+    for chapter_num in start_chapter..=end_chapter {
+        let current_index = chapter_num - start_chapter + 1;
+
+        loop {
+            db.delete_future_memories(chapter_num)?;
+            println!(
+                "{} {}",
+                "[!]".yellow().bold(),
+                format!(
+                    "检测到重新生成，已自动清理第 {} 章及之后的旧记忆残留...",
+                    chapter_num
+                )
+                .yellow()
+            );
+
+            println!(
+                "{} {}",
+                "[⏳]".yellow().bold(),
+                format!(
+                    "正在撰写第 {} 章 (剧情进度: {}/{})...",
+                    chapter_num, current_index, total_chapters
+                )
+                .yellow()
+            );
+
+            match writer_agent
+                .write_chapter(
+                    chapter_num,
+                    Some(requirement.as_str()),
+                    current_index,
+                    total_chapters,
+                    &db,
+                )
+                .await
+            {
+                Ok(chapter_text) => {
+                    let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
+                    println!(
+                        "{} {}",
+                        "[✅]".green().bold(),
+                        format!("第 {} 章已保存至 {}", chapter_num, chapter_path).green()
+                    );
+
+                    println!(
+                        "{} {}",
+                        "[⏳]".yellow().bold(),
+                        format!("正在总结第 {} 章并写入记忆库...", chapter_num).yellow()
+                    );
+
+                    match memory_agent
+                        .summarize_chapter(chapter_num, &chapter_text, &db)
+                        .await
+                    {
+                        Ok(()) => {
+                            println!(
+                                "{} {}",
+                                "[✅]".green().bold(),
+                                format!(
+                                    "第 {} 章摘要已写入记忆库，继续下一章。",
+                                    chapter_num
+                                )
+                                .green()
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            println!(
+                                "{} {}",
+                                "[错误]".red().bold(),
+                                format!(
+                                    "第 {} 章摘要更新失败：{:#}",
+                                    chapter_num, error
+                                )
+                                .red()
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    println!(
+                        "{} {}",
+                        "[错误]".red().bold(),
+                        format!("第 {} 章生成失败：{:#}", chapter_num, error).red()
+                    );
+                }
+            }
+
+            if !cli::prompt_retry_or_exit(&format!(
+                "第 {} 章处理失败，是否重试？选择 e 将立即退出 {}",
+                chapter_num, command_name
+            ))? {
+                println!(
+                    "{} {}",
+                    "[Stopped]".yellow().bold(),
+                    format!("{} 已在第 {} 章停止。", command_name, chapter_num).yellow()
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    println!(
+        "{} {}",
+        "[✅]".green().bold(),
+        format!(
+            "{} 已完成，共处理章节 {}-{}。",
+            command_name, start_chapter, end_chapter
+        )
+        .green()
+    );
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -356,134 +489,19 @@ async fn main() -> Result<()> {
                 "记忆库更新完成！系统已记住当前剧情进度。".green()
             );
         }
+        Commands::Continue {
+            start_chapter,
+            end_chapter,
+            requirement,
+        } => {
+            run_chapter_range(start_chapter, end_chapter, requirement, "continue").await?;
+        }
         Commands::BatchWrite {
             start_chapter,
             end_chapter,
             requirement,
         } => {
-            if end_chapter < start_chapter {
-                return Err(anyhow!(
-                    "end_chapter 必须大于或等于 start_chapter，当前输入: {} < {}",
-                    end_chapter,
-                    start_chapter
-                ));
-            }
-
-            let db = init_db()?;
-            let (writer_agent, memory_agent) = init_writer_and_memory_agents()?;
-            let total_chapters = end_chapter - start_chapter + 1;
-            let requirement = requirement.unwrap_or_default();
-
-            for chapter_num in start_chapter..=end_chapter {
-                let current_index = chapter_num - start_chapter + 1;
-
-                loop {
-                    db.delete_future_memories(chapter_num)?;
-                    println!(
-                        "{} {}",
-                        "[!]".yellow().bold(),
-                        format!(
-                            "检测到重新生成，已自动清理第 {} 章及之后的旧记忆残留...",
-                            chapter_num
-                        )
-                        .yellow()
-                    );
-
-                    println!(
-                        "{} {}",
-                        "[⏳]".yellow().bold(),
-                        format!(
-                            "正在撰写第 {} 章 (剧情进度: {}/{})...",
-                            chapter_num, current_index, total_chapters
-                        )
-                        .yellow()
-                    );
-
-                    match writer_agent
-                        .write_chapter(
-                            chapter_num,
-                            Some(requirement.as_str()),
-                            current_index,
-                            total_chapters,
-                            &db,
-                        )
-                        .await
-                    {
-                        Ok(chapter_text) => {
-                            let chapter_path = format!("{CHAPTERS_DIR}/chapter_{chapter_num}.txt");
-                            println!(
-                                "{} {}",
-                                "[✅]".green().bold(),
-                                format!("第 {} 章已保存至 {}", chapter_num, chapter_path).green()
-                            );
-
-                            println!(
-                                "{} {}",
-                                "[⏳]".yellow().bold(),
-                                format!("正在总结第 {} 章并写入记忆库...", chapter_num).yellow()
-                            );
-
-                            match memory_agent
-                                .summarize_chapter(chapter_num, &chapter_text, &db)
-                                .await
-                            {
-                                Ok(()) => {
-                                    println!(
-                                        "{} {}",
-                                        "[✅]".green().bold(),
-                                        format!(
-                                            "第 {} 章摘要已写入记忆库，继续下一章。",
-                                            chapter_num
-                                        )
-                                        .green()
-                                    );
-                                    break;
-                                }
-                                Err(error) => {
-                                    println!(
-                                        "{} {}",
-                                        "[错误]".red().bold(),
-                                        format!(
-                                            "第 {} 章摘要更新失败：{:#}",
-                                            chapter_num, error
-                                        )
-                                        .red()
-                                    );
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            println!(
-                                "{} {}",
-                                "[错误]".red().bold(),
-                                format!("第 {} 章生成失败：{:#}", chapter_num, error).red()
-                            );
-                        }
-                    }
-
-                    if !cli::prompt_retry_or_exit(&format!(
-                        "第 {} 章处理失败，是否重试？选择 e 将立即退出 batch-write",
-                        chapter_num
-                    ))? {
-                        println!(
-                            "{} {}",
-                            "[Stopped]".yellow().bold(),
-                            format!("batch-write 已在第 {} 章停止。", chapter_num).yellow()
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-
-            println!(
-                "{} {}",
-                "[✅]".green().bold(),
-                format!(
-                    "batch-write 已完成，共处理章节 {}-{}。",
-                    start_chapter, end_chapter
-                )
-                .green()
-            );
+            run_chapter_range(start_chapter, end_chapter, requirement, "batch-write").await?;
         }
     }
 

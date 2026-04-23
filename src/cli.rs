@@ -40,6 +40,12 @@ pub enum Commands {
         chapter_num: u32,
         requirement: Option<String>,
     },
+    Continue {
+        start_chapter: u32,
+        end_chapter: u32,
+        #[arg(long)]
+        requirement: Option<String>,
+    },
     BatchWrite {
         start_chapter: u32,
         end_chapter: u32,
