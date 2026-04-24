@@ -46,6 +46,17 @@ impl BaseAgent {
     }
 }
 
+impl BaseAgent {
+    pub async fn run_stream<F>(&self, user_prompt: &str, on_token: F) -> Result<String>
+    where
+        F: FnMut(&str),
+    {
+        self.client
+            .chat_stream(&self.config.system_prompt, user_prompt, on_token)
+            .await
+    }
+}
+
 impl Agent for BaseAgent {
     fn name(&self) -> &str {
         &self.name

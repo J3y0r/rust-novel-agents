@@ -324,11 +324,9 @@ impl MemoryAgent {
         db.upsert_chapter_summary(chapter_num, summary_response.summary.trim())?;
 
         for update in summary_response.character_updates {
-            if let Err(err) = db.upsert_character_from_summary(
-                &update.name,
-                &update.description,
-                &update.status,
-            ) {
+            if let Err(err) =
+                db.upsert_character_from_summary(&update.name, &update.description, &update.status)
+            {
                 eprintln!(
                     "[Memory] failed to upsert character from chapter summary: {} ({})",
                     update.name, err

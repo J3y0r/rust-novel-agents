@@ -66,12 +66,31 @@ impl WriterAgent {
             arc_total_chapters,
             db,
         )?;
-        let chapter_text = self
-            .run(&prompt)
+
+        println!();
+        println!(
+            "{}",
+            format!(
+                "================ 第 {} 章正文 ================",
+                chapter_num
+            )
+            .bright_magenta()
+            .bold()
+        );
+
+        let mut chapter_text = String::new();
+        self.base
+            .run_stream(&prompt, |token| {
+                print!("{}", token.bright_white());
+                std::io::Write::flush(&mut std::io::stdout()).ok();
+                chapter_text.push_str(token);
+            })
             .await
             .context("writer agent failed to generate chapter")?;
 
-        self.print_chapter(chapter_num, &chapter_text);
+        println!();
+        println!();
+
         self.save_chapter(chapter_num, &chapter_text)?;
 
         Ok(chapter_text)
